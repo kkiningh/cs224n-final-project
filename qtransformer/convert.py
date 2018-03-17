@@ -11,7 +11,7 @@ from tensor2tensor.utils import t2t_model
 from tensor2tensor.utils import registry
 from tensor2tensor.utils import metrics
 
-def quantize_weights(ws, num_codes=256, sharded=False):
+def quantize_weights(ws, num_codes, sharded=False):
     if sharded:
         ws_full = np.vstack(ws).flatten()
     else:
@@ -20,6 +20,7 @@ def quantize_weights(ws, num_codes=256, sharded=False):
     # Indexes are the bin that each weight falls in
     bins = np.linspace(0, 100, num_codes + 1)
     pers = np.percentile(ws_full, bins)
+    pers[-1] += 1000 # Increase the range of the last bucket so digitize does the right thing
     if sharded:
         idxs = [np.digitize(w, pers) - 1 for w in ws]
     else:
@@ -31,7 +32,7 @@ def quantize_weights(ws, num_codes=256, sharded=False):
     return idxs, codes
 
 def quantize_scope(reader, scope, weights_name, idxs_name, codebook_name,
-        num_codes=256, sharded=False, num_shards=1):
+        num_codes, sharded=False, num_shards=1):
     if sharded:
         ws = [reader.get_tensor(scope + '/' + weights_name + '_{}'.format(i))
             for i in range(num_shards)]
