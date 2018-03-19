@@ -695,6 +695,7 @@ def transformer_encoder(encoder_input,
               make_image_summary=make_image_summary,
               dropout_broadcast_dims=attention_dropout_broadcast_dims,
               quantize=hparams.quantize_attn,
+              prune=hparams.prune_attn,
               codebook_size=hparams.quantize_codes)
           x = common_layers.layer_postprocess(x, y, hparams)
         with tf.variable_scope("ffn"):
@@ -771,6 +772,7 @@ def transformer_decoder(decoder_input,
               make_image_summary=make_image_summary,
               dropout_broadcast_dims=attention_dropout_broadcast_dims,
               quantize=hparams.quantize_attn,
+              prune=hparams.prune_attn,
               codebook_size=hparams.quantize_codes)
           x = common_layers.layer_postprocess(x, y, hparams)
         if encoder_output is not None:
@@ -789,6 +791,7 @@ def transformer_decoder(decoder_input,
                 make_image_summary=make_image_summary,
                 dropout_broadcast_dims=attention_dropout_broadcast_dims,
                 quantize=hparams.quantize_attn,
+                prune=hparams.prune_attn,
                 codebook_size=hparams.quantize_codes)
             x = common_layers.layer_postprocess(x, y, hparams)
         with tf.variable_scope("ffn"):
@@ -845,6 +848,7 @@ def transformer_ffn_layer(x,
         dropout=hparams.relu_dropout,
         dropout_broadcast_dims=relu_dropout_broadcast_dims,
         quantize=hparams.quantize_ffn,
+        prune=hparams.prune_ffn,
         codebook_size=hparams.quantize_codes)
     if pad_remover:
       # Restore `conv_output` to the original shape of `x`, including padding.
@@ -931,11 +935,14 @@ def transformer_base_v1():
   hparams.add_hparam("self_attention_type", "dot_product")
   hparams.add_hparam("max_relative_position", 0)
   # Quantization HParams
-  hparams.add_hparam("quantize_embedding", True)
-  hparams.add_hparam("quantize_ffn", True)
-  hparams.add_hparam("quantize_attn", True)
+  hparams.add_hparam("quantize_embedding", False)
+  hparams.add_hparam("quantize_ffn", False)
+  hparams.add_hparam("quantize_attn", False)
   hparams.add_hparam("quantize_codes", 256)
+  # Pruning Parameters
   hparams.add_hparam("prune_embedding", True)
+  hparams.add_hparam("prune_ffn", True)
+  hparams.add_hparam("prune_attn", True)
   return hparams
 
 

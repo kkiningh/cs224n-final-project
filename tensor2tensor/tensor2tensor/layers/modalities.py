@@ -63,7 +63,7 @@ class SymbolModality(modality.Modality):
 
     return weights_fn
 
-  def _get_weights(self, hidden_dim=None, quantize_embedding=None):
+  def _get_weights(self, hidden_dim=None, quantize_embedding=None, prune_embedding=None):
     """Create or get concatenated embedding or softmax variable.
 
     Args:
@@ -76,6 +76,8 @@ class SymbolModality(modality.Modality):
       hidden_dim = self._body_input_depth
     if quantize_embedding is None:
         quantize_embedding = self._model_hparams.quantize_embedding
+    if prune_embedding is None:
+        prune_embedding = self._model_hparams.prune_embedding
 
     if quantize_embedding:
       codebook_size = self._model_hparams.quantize_codes
@@ -96,11 +98,20 @@ class SymbolModality(modality.Modality):
             initializer=tf.random_uniform_initializer(0, codebook_size, dtype=tf.int32),
             trainable=False)
         tf.add_to_collection('idxs', weight_idxs)
-        shards.append(tf.gather(codebook, weight_idxs))
+        weights = tf.gather(codebook, weight_idxs)
       else:
-        shards.append(tf.get_variable(
+        weights = tf.get_variable(
             "weights_%d" % i, [shard_size, hidden_dim],
-            initializer=tf.random_normal_initializer(0.0, hidden_dim**-0.5), trainable=True))
+            initializer=tf.random_normal_initializer(0.0, hidden_dim**-0.5), trainable=True)
+        if prune_embedding:
+            mask = tf.get_variable(
+                "weights_mask_%d" % i, [shard_size, hidden_dim], dtype=tf.bool,
+                initializer=tf.ones_initializer(tf.bool), trainable=False)
+            tf.add_to_collection('masks', mask)
+            weights = tf.where(mask, weights, tf.zeros_like(weights))
+
+      # Append the weights to the current shards
+      shards.append(weights)
     if num_shards == 1:
       ret = shards[0]
     else:

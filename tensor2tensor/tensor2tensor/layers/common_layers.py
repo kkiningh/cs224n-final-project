@@ -510,8 +510,8 @@ def layer_norm_vars(filters):
 
 def layer_norm_compute_python(x, epsilon, scale, bias):
   """Layer norm raw computation."""
-  mean = tf.reduce_mean(x, axis=[-1], keep_dims=True)
-  variance = tf.reduce_mean(tf.square(x - mean), axis=[-1], keep_dims=True)
+  mean = tf.reduce_mean(x, axis=[-1], keepdims=True)
+  variance = tf.reduce_mean(tf.square(x - mean), axis=[-1], keepdims=True)
   norm_x = (x - mean) * tf.rsqrt(variance + epsilon)
   return norm_x * scale + bias
 
@@ -1322,11 +1322,11 @@ def maybe_zero_out_padding(inputs, kernel_size, nonpadding_mask):
 
 
 def dense_relu_dense(inputs, filter_size, output_size, dropout=0.0,
-                     dropout_broadcast_dims=None, quantize=False, codebook_size=256):
+                     dropout_broadcast_dims=None, quantize=False, codebook_size=256, prune=False):
   """Hidden layer with RELU activation followed by linear projection."""
-  if quantize:
+  if quantize or prune:
    h = quantized_dense(
-     inputs, filter_size, codebook_size=codebook_size,
+     inputs, filter_size, codebook_size=codebook_size, use_codebook=quantize, use_mask=prune,
      use_bias=True, activation=tf.nn.relu, name="conv1")
   else:
    h = dense(
@@ -1334,9 +1334,9 @@ def dense_relu_dense(inputs, filter_size, output_size, dropout=0.0,
   if dropout != 0.0:
     h = dropout_with_broadcast_dims(
         h, 1.0 - dropout, broadcast_dims=dropout_broadcast_dims)
-  if quantize:
+  if quantize or prune:
     o = quantized_dense(
-       h, output_size, codebook_size=codebook_size,
+       h, output_size, codebook_size=codebook_size, use_codebook=quantize, use_mask=prune,
        use_bias=True, name="conv2")
   else:
     o = dense(h, output_size, use_bias=True, name="conv2")
@@ -1714,7 +1714,7 @@ def smoothing_cross_entropy(logits,
           depth=vocab_size,
           on_value=confidence,
           off_value=low_confidence)
-    xentropy = tf.nn.softmax_cross_entropy_with_logits(
+    xentropy = tf.nn.softmax_cross_entropy_with_logits_v2(
         logits=logits, labels=soft_targets)
     return xentropy - normalizing
 
@@ -2628,18 +2628,23 @@ def force_dependency(xs, ys):
   return [x + my_zero for x in xs]
 
 
-class QuantizedDense(tf.layers.Dense):
+class SparseQuantizedDense(tf.layers.Dense):
   def __init__(self, units, codebook_size,
         activation=None,
         use_bias=True,
+        use_codebook=True,
+        use_mask=True,
         name=None,
         **kwargs):
-    super(QuantizedDense, self).__init__(
+    super(SparseQuantizedDense, self).__init__(
         units=units,
         activation=activation,
         use_bias=use_bias,
         name=name,
         **kwargs)
+
+    self.use_codebook = use_codebook
+    self.use_mask = use_mask
     self.codebook_size = codebook_size
 
   def build(self, input_shape):
@@ -2650,16 +2655,31 @@ class QuantizedDense(tf.layers.Dense):
                        'should be defined. Found `None`.')
     self.input_spec = tf.layers.InputSpec(
         min_ndim=2, axes={-1: input_shape[-1].value})
-    self.codebook = self.add_variable(
-        'codebook', shape=[self.codebook_size], dtype=self.dtype,
-        trainable=True)
-    tf.add_to_collection('codebooks', self.codebook)
-    self.kernel_idx = self.add_variable(
-        'kernel_idx', shape=[input_shape[-1].value, self.units], dtype=tf.int32,
-        initializer=tf.zeros_initializer(dtype=tf.int32),
-        trainable=False)
-    tf.add_to_collection('idxs', self.kernel_idx)
-    self.kernel = tf.gather(self.codebook, self.kernel_idx)
+    if self.use_codebook:
+        self.codebook = self.add_variable(
+            'codebook', shape=[self.codebook_size], dtype=self.dtype,
+            trainable=True)
+        tf.add_to_collection('codebooks', self.codebook)
+        self.kernel_idx = self.add_variable(
+            'kernel_idx', shape=[input_shape[-1].value, self.units], dtype=tf.int32,
+            initializer=tf.zeros_initializer(dtype=tf.int32),
+            trainable=False)
+        tf.add_to_collection('idxs', self.kernel_idx)
+        self.kernel = tf.gather(self.codebook, self.kernel_idx)
+    else:
+        self.kernel = self.add_variable(
+            'kernel', shape=[input_shape[-1].value, self.units], dtype=tf.float32,
+            initializer=tf.zeros_initializer(dtype=tf.float32),
+            trainable=True)
+
+    if self.use_mask:
+        self.kernel_mask = self.add_variable(
+            'kernel_mask', shape=[input_shape[-1].value, self.units], dtype=tf.bool,
+            initializer=tf.ones_initializer(dtype=tf.bool),
+            trainable=False)
+        tf.add_to_collection('masks', self.kernel_mask)
+
+        self.kernel = tf.where(self.kernel_mask, self.kernel, tf.zeros_like(self.kernel))
 
     if self.use_bias:
       self.bias = self.add_variable(
@@ -2673,8 +2693,9 @@ class QuantizedDense(tf.layers.Dense):
     self.built = True
 
 
-def quantized_dense(inputs, units, codebook_size, **kwargs):
-  layer = QuantizedDense(units=units, codebook_size=codebook_size, **kwargs)
+def quantized_dense(inputs, units, codebook_size, use_codebook, use_mask, **kwargs):
+  layer = SparseQuantizedDense(
+          units=units, codebook_size=codebook_size, use_codebook=use_codebook, use_mask=use_mask, **kwargs)
   return layer.apply(inputs)
 
 

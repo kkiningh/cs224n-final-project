@@ -2361,7 +2361,8 @@ def compute_qkv(query_antecedent,
                 q_padding="VALID",
                 kv_padding="VALID",
                 quantize=False,
-                codebook_size=256):
+                codebook_size=256,
+                prune=False):
   """Computes query, key and value.
 
   Args:
@@ -2382,9 +2383,9 @@ def compute_qkv(query_antecedent,
     memory_antecedent = query_antecedent
   def _compute(inp, depth, filter_width, padding, name):
     if filter_width == 1:
-      if quantize:
+      if quantize or prune:
         return common_layers.quantized_dense(
-            inp, depth, codebook_size=codebook_size, use_bias=False, name=name)
+            inp, depth, codebook_size=codebook_size, use_codebook=quantize, use_mask=prune, use_bias=False, name=name)
       else:
         return common_layers.dense(inp, depth, use_bias=False, name=name)
     else:
@@ -2424,6 +2425,7 @@ def multihead_attention(query_antecedent,
                         dropout_broadcast_dims=None,
                         quantize=False,
                         codebook_size=256,
+                        prune=False,
                         **kwargs):
   """Multihead scaled-dot-product attention with input/output transformations.
 
@@ -2506,7 +2508,7 @@ def multihead_attention(query_antecedent,
       values=[query_antecedent, memory_antecedent]):
     q, k, v = compute_qkv(query_antecedent, memory_antecedent, total_key_depth,
                           total_value_depth, q_filter_width, kv_filter_width,
-                          q_padding, kv_padding, quantize, codebook_size)
+                          q_padding, kv_padding, quantize, codebook_size, prune=prune)
 
     if cache is not None:
       if attention_type != "dot_product":
@@ -2556,9 +2558,9 @@ def multihead_attention(query_antecedent,
       x = dilated_self_attention_1d(q, k, v, block_length, block_width,
                                     gap_size, num_memory_blocks)
     x = combine_heads(x)
-    if quantize:
+    if quantize or prune:
       x = common_layers.quantized_dense(
-          x, output_depth, codebook_size=codebook_size,
+          x, output_depth, codebook_size=codebook_size, use_codebook=quantize, use_mask=prune,
           use_bias=False, name="output_transform")
     else:
       x = common_layers.dense(
