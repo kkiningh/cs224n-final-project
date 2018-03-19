@@ -12,3 +12,7 @@ url = "https://pypi.python.org/simple"
 [packages]
 
 "tensor2tensor" = {extras = ["tensorflow-gpu"]}
+tensorflow-gpu = "*"
+ipython = "*"
+numpy = "*"
+matplotlib = "*"
